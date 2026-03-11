@@ -1,6 +1,6 @@
 # 博主验真 — PRD
 
-> H5独立产品 · v1.0 · 2026-03-11
+> H5独立产品 · v2.0 · 2026-03-12
 
 ---
 
@@ -8,9 +8,7 @@
 
 **问题：** 散户关注了一堆荐股公众号，但不知道谁真的准。博主只晒盈利截图，亏的从不提。人工翻几百篇历史文章统计胜率，没人做得到。
 
-**数据验证：** 微信荐股公众号数以万计，大部分散户同时关注5-10个。据非正式调研，80%的散户无法分辨博主推荐质量，只能凭感觉跟单。
-
-**解法：** 用户粘贴公众号文章链接 → 系统自动提取推荐股票 → 拉取真实行情计算收益 → 生成一张客观的"博主成绩单"。
+**解法：** 用户输入公众号名称 + 选择日期范围 → 系统自动爬取该公众号的历史文章 → AI提取推荐股票 → 拉取真实行情计算收益 → 生成一张客观的"博主成绩单"。
 
 ---
 
@@ -18,22 +16,22 @@
 
 | 指标 | 目标 | 衡量方式 |
 |------|------|---------|
-| 分析完成率 | >90% 的链接能成功抓取+提取 | 后端日志统计 |
-| 单篇分析耗时 | <5秒 | 接口监控 |
-| 7日留存 | >25% | 用户再次打开H5 |
-| 自然分享率 | >15% | 分享按钮点击/总PV |
+| 文章爬取成功率 | >80% 的公众号能搜到文章 | 后端日志 |
+| AI提取准确率 | >85% 的推荐股票被正确识别 | 人工抽检 |
+| 单次分析耗时 | <2分钟（20篇文章） | 接口监控 |
+| 自然分享率 | >15% | 分享点击/总PV |
 
-核心北极星指标：**累计分析文章数**（代表真实使用深度）
+核心北极星指标：**累计分析博主数**
 
 ---
 
 ## 不做什么（Out of Scope）
 
-- ❌ 截图识别股票（V1功能，小程序审核不过，砍掉）
+- ❌ 手动粘贴文章链接（太麻烦，用户体验差）
 - ❌ 博主排行榜/公开排名（法律风险）
-- ❌ 自动订阅博主新文章（二期再考虑）
 - ❌ 付费功能（MVP阶段免费验证需求）
 - ❌ 用户注册/登录（H5用匿名ID，降低门槛）
+- ❌ 自动订阅更新（二期再做）
 
 ---
 
@@ -42,46 +40,79 @@
 ```
 打开H5
   ↓
-粘贴公众号文章链接（1-50条）
+输入公众号名称（如"XX财经"）
   ↓
-选择持有天数（默认5天）
+系统搜索匹配的公众号 → 用户确认选择
+  ↓
+选择日期范围（近1个月/3个月/6个月/1年）
+  ↓
+选择持有天数（1/3/5/10/20天，默认5天）
   ↓
 [开始分析]
   ↓
-实时显示进度（第3/20篇，发现XX股...）
+实时显示进度：
+  正在爬取文章列表... (3/25篇)
+  正在分析《今日妖股推荐》... 发现3只推荐股
+  正在查询行情数据...
   ↓
 生成博主成绩单
   ↓
-[分享成绩单] / [继续添加文章] / [查看历史]
+[分享成绩单] / [查看历史]
 ```
-
-**关键决策：不做登录**。用浏览器 localStorage 存历史记录，够用。等有了稳定用户群再考虑账号体系。
 
 ---
 
 ## 核心功能
 
-### 1. 文章分析
+### 1. 公众号搜索
 
-**输入：** 公众号文章链接（`https://mp.weixin.qq.com/s/xxx`），支持批量粘贴，每行一条，上限50条。
+**输入：** 公众号名称关键词
 
-**处理流程：**
+**流程：**
+1. 用户输入名称（如"XX财经"）
+2. 后端通过搜狗微信搜索（weixin.sogou.com）查找匹配的公众号
+3. 返回匹配列表：公众号名称 + 简介 + 头像
+4. 用户点击确认目标公众号
 
+**搜索API：**
 ```
-抓取HTML → 解析正文/标题/发布日期/公众号名
-    ↓
-AI提取推荐股票（代码、名称、方向、力度、原文片段）
-    ↓
-查询行情：买入价=推荐次日开盘价，卖出价=N日后收盘价
-    ↓
-计算单篇收益 → 汇总博主成绩单
+https://weixin.sogou.com/weixin?type=1&query={公众号名称}
+```
+- type=1 是搜索公众号
+- type=2 是搜索文章
+
+### 2. 文章爬取
+
+**确认公众号后，自动爬取文章列表：**
+
+1. 通过搜狗微信搜索该公众号的文章（type=2）
+2. 按日期范围筛选
+3. 逐篇抓取文章正文
+
+**搜狗文章搜索：**
+```
+https://weixin.sogou.com/weixin?type=2&query={公众号名称}&tsn=1  (近1天)
+https://weixin.sogou.com/weixin?type=2&query={公众号名称}&tsn=2  (近1周)
+https://weixin.sogou.com/weixin?type=2&query={公众号名称}&tsn=3  (近1月)
+https://weixin.sogou.com/weixin?type=2&query={公众号名称}&tsn=4  (近1年)
 ```
 
-**AI提取规则：**
-- 只提取明确推荐/建议关注的股票
-- 仅作为举例或对比提到的不算
-- 纯技术分析没有具体推荐的返回空
-- 输出：`{stock_code, stock_name, direction, strength, context}`
+**降级方案：** 如果搜狗被限流或封锁：
+- 备选1：提示用户手动粘贴文章链接（退回到手动模式）
+- 备选2：接入第三方数据API（新榜等）
+
+**爬取注意事项：**
+- 每篇文章间隔1-2秒，避免被限流
+- 设置合理的User-Agent
+- 缓存已爬取的文章，重复分析不重复爬取
+- 搜狗可能需要处理验证码 → 如遇到，提示用户稍后重试
+
+### 3. AI分析
+
+**对每篇文章：**
+1. AI提取推荐股票（代码、名称、方向、力度、原文片段）
+2. 只提取明确推荐/建议关注的股票，举例对比不算
+3. 输出：`{stock_code, stock_name, direction, strength, context}`
 
 **收益计算规则：**
 
@@ -93,12 +124,12 @@ AI提取推荐股票（代码、名称、方向、力度、原文片段）
 | 胜率 | 收益>0 的推荐数 / 总推荐数 |
 | 平均收益 | 所有推荐的收益率算术平均 |
 
-### 2. 博主成绩单
+### 4. 博主成绩单
 
 一屏展示：
 
 **头部**
-- 公众号名称、已分析篇数、推荐股票总数
+- 公众号名称、头像、已分析篇数、推荐股票总数、日期范围
 
 **核心指标（大字）**
 - 胜率（>50%绿色，<50%红色）
@@ -110,26 +141,25 @@ AI提取推荐股票（代码、名称、方向、力度、原文片段）
 - >10% / 5~10% / 0~5% / 0~-5% / -5~-10% / <-10%
 
 **AI一句话评价**
-- 3-5句客观评价：胜率水平、推荐风格、是否值得参考、使用建议
+- 3-5句客观评价：胜率水平、推荐风格、是否值得参考
 - 100字以内，中性语气
 
 **推荐时间线**
-- 按时间倒序，每条：日期+股票+收益+✅❌
+- 按时间倒序，每条：日期 + 文章标题 + 股票 + 收益 + ✅❌
 
 **底部操作**
-- [添加更多文章] [分享成绩单]
+- [分享成绩单] [查看历史]
 
-### 3. 历史记录
+### 5. 历史记录
 
-- 本地存储（localStorage），列出已分析过的博主
+- localStorage存储，列出已分析过的博主
 - 点击可查看历史成绩单
-- 支持追加新文章链接更新成绩
 
-### 4. 分享
+### 6. 分享
 
 - 生成成绩单截图（canvas渲染）
-- 支持保存到相册 / 复制链接分享
-- 分享页面可直接查看成绩单（只读）
+- 支持保存到相册 / 复制链接
+- 分享链接可直接查看成绩单（只读）
 
 ---
 
@@ -139,13 +169,13 @@ AI提取推荐股票（代码、名称、方向、力度、原文片段）
 
 | 层 | 选型 | 理由 |
 |----|------|------|
-| 前端 | React + Tailwind CSS | 组件化开发，样式快 |
-| 构建 | Vite | 快 |
-| 后端 | Node.js (Express) | 和前端同语言，Jules擅长 |
+| 前端 | React + Tailwind CSS + Vite | 组件化，样式快 |
+| 后端 | Node.js (Express) | 和前端同语言 |
+| 爬虫 | axios + cheerio | 搜狗搜索 + 微信文章HTML解析 |
 | AI | Gemini 2.0 Flash API | 便宜快，够用 |
-| 行情 | 腾讯行情 qt.gtimg.cn | 免费稳定，之前验证过 |
+| 行情 | 腾讯行情 qt.gtimg.cn | 免费稳定 |
 | 数据库 | SQLite (better-sqlite3) | MVP够用，零运维 |
-| 部署 | Vercel (前端) + Railway/Render (后端) | 免费额度足够MVP |
+| 部署 | Vercel (前端) + Railway/Render (后端) | 免费额度足够 |
 
 ### 架构
 
@@ -153,10 +183,12 @@ AI提取推荐股票（代码、名称、方向、力度、原文片段）
 React SPA (Vercel)
     ↓ HTTPS
 Express API (Railway/Render)
-    ├── /api/analyze         → 提交分析任务
+    ├── /api/search          → 搜索公众号
+    ├── /api/analyze         → 提交分析任务（公众号ID+日期范围）
     ├── /api/analyze/:id/sse → SSE推送进度
     ├── /api/analyze/:id     → 获取结果
     └── /api/share/:id       → 分享页数据
+        ├── 搜狗微信搜索（公众号+文章列表）
         ├── 微信文章抓取（cheerio解析HTML）
         ├── AI提取（@google/generative-ai）
         └── 行情查询（axios → qt.gtimg.cn）
@@ -165,7 +197,7 @@ Express API (Railway/Render)
 ### 环境变量
 
 ```
-GEMINI_API_KEY=xxx          # Gemini API密钥
+GEMINI_API_KEY=xxx             # Gemini API密钥
 DATABASE_URL=./data/db.sqlite  # SQLite路径
 CORS_ORIGIN=https://xxx.vercel.app  # 前端域名
 ```
@@ -174,58 +206,108 @@ CORS_ORIGIN=https://xxx.vercel.app  # 前端域名
 
 | 接口 | 方法 | 说明 |
 |------|------|------|
-| `/api/analyze` | POST | 提交分析任务，返回task_id |
-| `/api/analyze/:taskId/progress` | GET | 轮询进度（或用SSE推送） |
-| `/api/analyze/:taskId/result` | GET | 获取成绩单 |
+| `/api/search` | GET | 搜索公众号，参数：`?q=XX财经` |
+| `/api/analyze` | POST | 提交分析任务 |
+| `/api/analyze/:taskId/sse` | GET | SSE推送进度 |
+| `/api/analyze/:taskId` | GET | 获取成绩单结果 |
 | `/api/share/:shareId` | GET | 分享页数据 |
 
-**进度推送方案：** 优先用SSE（Server-Sent Events），前端实时显示"正在分析第X篇..."。降级方案：每2秒轮询。
-
-### 数据存储
-
-**后端（SQLite / PostgreSQL）：**
-
-```
-bloggers: id, name, share_id, created_at, updated_at
-articles: id, blogger_id, url, title, publish_date, stocks_found
-recommendations: id, article_id, blogger_id, stock_code, stock_name,
-                 direction, strength, recommend_date, buy_price,
-                 sell_price, hold_days, return_pct, result, context
-```
-
-**前端（localStorage）：**
-
+**提交分析请求：**
 ```json
+POST /api/analyze
 {
-  "history": [
-    {
-      "blogger_name": "XX财经",
-      "task_id": "task_abc",
-      "share_id": "s_xyz",
-      "win_rate": 0.43,
-      "articles_count": 32,
-      "last_analyzed": "2026-03-11"
-    }
-  ]
+  "blogger_name": "XX财经",
+  "blogger_id": "sogou_xxx",    // 搜狗搜索返回的ID
+  "date_range": "3m",           // 1m/3m/6m/1y
+  "hold_days": 5                // 1/3/5/10/20
 }
 ```
 
-### 关键技术点
+**SSE进度推送：**
+```
+event: progress
+data: {"phase":"crawl","current":3,"total":25,"title":"今日妖股推荐"}
 
-**1. 微信文章抓取**
-- 公众号文章公开可访问，不需要登录
-- 直接HTTP GET，解析HTML提取正文
-- 风险：微信可能对高频请求限流 → 加延时（每篇间隔1秒）、设User-Agent
+event: progress
+data: {"phase":"analyze","current":3,"total":25,"stocks_found":8}
 
-**2. AI提取准确度**
-- Gemini 2.0 Flash做初步提取（便宜快）
-- 可疑结果用Claude二次校验（贵但准）
-- 展示"推荐原文片段"让用户自行判断
+event: progress
+data: {"phase":"market","current":5,"total":8}
 
-**3. 行情数据**
-- 腾讯行情（qt.gtimg.cn），免费稳定
-- 需要历史日K数据（开盘价、收盘价）
-- 接口：`http://qt.gtimg.cn/q=sh601179` + 日K历史
+event: complete
+data: {"task_id":"xxx","share_id":"yyy"}
+```
+
+### 数据存储
+
+**后端（SQLite）：**
+
+```sql
+CREATE TABLE bloggers (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  avatar_url TEXT,
+  description TEXT,
+  share_id TEXT UNIQUE,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE articles (
+  id TEXT PRIMARY KEY,
+  blogger_id TEXT REFERENCES bloggers(id),
+  url TEXT,
+  title TEXT,
+  publish_date DATE,
+  stocks_found INTEGER DEFAULT 0,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE recommendations (
+  id TEXT PRIMARY KEY,
+  article_id TEXT REFERENCES articles(id),
+  blogger_id TEXT REFERENCES bloggers(id),
+  stock_code TEXT,
+  stock_name TEXT,
+  direction TEXT,         -- bullish/bearish/neutral
+  strength TEXT,          -- strong/normal/mention
+  recommend_date DATE,
+  buy_price REAL,
+  sell_price REAL,
+  hold_days INTEGER,
+  return_pct REAL,
+  result TEXT,            -- win/lose/pending
+  context TEXT,           -- 推荐原文片段
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+### 搜狗微信爬虫细节
+
+**1. 搜索公众号**
+```
+GET https://weixin.sogou.com/weixin?type=1&query={name}
+```
+解析HTML提取：公众号名称、微信号、简介、头像、链接
+
+**2. 搜索文章列表**
+```
+GET https://weixin.sogou.com/weixin?type=2&query={name}&tsn={时间范围}
+```
+解析HTML提取：文章标题、摘要、链接、发布时间
+注意：搜狗返回的链接需要跳转才能拿到真实微信文章URL
+
+**3. 抓取文章正文**
+```
+GET https://mp.weixin.qq.com/s/xxxxx
+```
+cheerio解析提取：标题、正文、发布日期
+
+**4. 反爬对策**
+- 请求间隔1-2秒
+- 随机User-Agent
+- 遇到验证码返回提示"搜索繁忙，请稍后重试"
+- 已爬取的文章缓存到数据库，不重复爬取
 
 ---
 
@@ -233,11 +315,12 @@ recommendations: id, article_id, blogger_id, stock_code, stock_name,
 
 | 异常 | 处理 |
 |------|------|
-| 链接无法访问 | 标记为"抓取失败"，跳过继续 |
-| 文章无推荐股票 | 标记为"未发现推荐"，正常计入已分析 |
-| 股票已退市 | 标记为"已退市"，不计入胜率 |
-| 推荐日期在未来/太近 | 标记为"待验证"，显示但不计入统计 |
-| AI提取结果可疑 | 标注"AI置信度低"，展示原文供用户确认 |
+| 搜索不到公众号 | 提示"未找到，请检查名称" |
+| 搜狗限流/验证码 | 提示"搜索繁忙，请稍后重试" |
+| 文章无法访问 | 标记"抓取失败"，跳过继续 |
+| 文章无推荐股票 | 标记"未发现推荐"，正常计入 |
+| 股票已退市 | 标记"已退市"，不计入胜率 |
+| 推荐日期太近 | 标记"待验证"，不计入统计 |
 
 ---
 
@@ -245,22 +328,53 @@ recommendations: id, article_id, blogger_id, stock_code, stock_name,
 
 | 风险 | 概率 | 影响 | 应对 |
 |------|------|------|------|
-| 微信封锁抓取 | 中 | 核心功能不可用 | 降级：用户手动粘贴文章正文 |
+| 搜狗封锁爬虫 | 高 | 无法搜索文章 | 降级到手动粘贴链接模式；接入第三方API |
+| 搜狗文章覆盖不全 | 中 | 分析不完整 | 提示用户"搜索到X篇，可能不完整" |
 | AI提取不准 | 中 | 胜率偏差 | 展示原文片段，支持用户修正 |
-| 博主投诉 | 低 | 法律纠纷 | 只做客观统计，不排名不推荐，加免责声明 |
-| 腾讯行情接口变动 | 低 | 收益算不出 | 备用东方财富接口 |
+| 博主投诉 | 低 | 法律纠纷 | 只做客观统计，加免责声明 |
 
 ---
 
-## 里程碑
+## 页面设计
 
-| 阶段 | 时间 | 交付物 | 验收标准 |
-|------|------|--------|---------|
-| PRD定稿 | 3/11 | 本文档 | ✅ |
-| 后端MVP | 3/15 | 文章抓取+AI提取+行情查询 | 能正确分析10篇真实文章 |
-| 前端MVP | 3/18 | H5页面：输入→进度→成绩单 | 完整流程可跑通 |
-| 联调测试 | 3/20 | 端到端测试 | 20个真实博主×10篇文章通过 |
-| 上线 | 3/22 | 部署+域名+分享链接 | 可公开访问使用 |
+### 首页
+
+```
+┌─────────────────────────┐
+│     📊 博主验真          │
+│   看清荐股博主的真实胜率  │
+├─────────────────────────┤
+│                         │
+│  🔍 输入公众号名称       │
+│  ┌─────────────────┐    │
+│  │ XX财经           │    │  ← 搜索框，输入即搜
+│  └─────────────────┘    │
+│                         │
+│  搜索结果：              │
+│  ┌─────────────────┐    │
+│  │ 🟢 XX财经        │    │  ← 点击选择
+│  │ 每日荐股分析...   │    │
+│  ├─────────────────┤    │
+│  │ 🟢 XX财经Pro     │    │
+│  │ 深度投资研究...   │    │
+│  └─────────────────┘    │
+│                         │
+│  日期范围：              │
+│  [1月] [3月✓] [6月] [1年]│
+│                         │
+│  持有天数：              │
+│  [1] [3] [5✓] [10] [20] │
+│                         │
+│  [🔍 开始分析]           │
+│                         │
+├─────────────────────────┤
+│  📁 历史分析             │
+│  ┌─────────────────┐    │
+│  │ XX财经  胜率43%  │    │
+│  │ 32篇  近3个月    │    │
+│  └─────────────────┘    │
+└─────────────────────────┘
+```
 
 ---
 
@@ -271,12 +385,14 @@ blogger-verify/
 ├── frontend/              # React SPA
 │   ├── src/
 │   │   ├── pages/
-│   │   │   ├── Home.tsx          # 首页：输入链接
+│   │   │   ├── Home.tsx          # 首页：搜索公众号
 │   │   │   ├── Progress.tsx      # 分析进度（SSE）
 │   │   │   ├── Report.tsx        # 博主成绩单
 │   │   │   ├── History.tsx       # 历史记录
 │   │   │   └── Share.tsx         # 分享页（只读）
 │   │   ├── components/
+│   │   │   ├── SearchBox.tsx     # 公众号搜索框
+│   │   │   ├── BloggerCard.tsx   # 公众号搜索结果卡片
 │   │   │   ├── StatsCard.tsx     # 核心指标卡片
 │   │   │   ├── Distribution.tsx  # 收益分布图
 │   │   │   ├── Timeline.tsx      # 推荐时间线
@@ -288,28 +404,42 @@ blogger-verify/
 ├── backend/               # Express API
 │   ├── src/
 │   │   ├── routes/
-│   │   │   ├── analyze.ts        # 分析任务
-│   │   │   └── share.ts          # 分享
+│   │   │   ├── search.ts        # 公众号搜索
+│   │   │   ├── analyze.ts       # 分析任务
+│   │   │   └── share.ts         # 分享
 │   │   ├── services/
-│   │   │   ├── scraper.ts        # 微信文章抓取
-│   │   │   ├── extractor.ts      # AI提取推荐股票
-│   │   │   ├── market.ts         # 行情查询
-│   │   │   └── report.ts         # 成绩单生成
+│   │   │   ├── sogou.ts         # 搜狗微信搜索+文章列表
+│   │   │   ├── scraper.ts       # 微信文章正文抓取
+│   │   │   ├── extractor.ts     # AI提取推荐股票
+│   │   │   ├── market.ts        # 行情查询
+│   │   │   └── report.ts        # 成绩单生成
 │   │   └── db/
-│   │       ├── schema.sql        # 建表语句
-│   │       └── index.ts          # 数据库操作
+│   │       ├── schema.sql       # 建表语句
+│   │       └── index.ts         # 数据库操作
 │   └── package.json
 └── README.md
 ```
 
 ---
 
+## 里程碑
+
+| 阶段 | 时间 | 交付物 | 验收标准 |
+|------|------|--------|---------|
+| PRD v2定稿 | 3/12 | 本文档 | ✅ |
+| 后端MVP | 3/16 | 搜狗搜索+文章爬取+AI提取+行情 | 输入公众号名，能搜到并分析 |
+| 前端MVP | 3/19 | H5页面：搜索→进度→成绩单 | 完整流程跑通 |
+| 联调测试 | 3/21 | 端到端测试 | 10个真实博主验证通过 |
+| 上线 | 3/23 | 部署+域名 | 可公开访问 |
+
+---
+
 ## 后续可能（不在本期）
 
-- 自动抓取博主最新文章，定期更新成绩单
-- 博主对比（同时查看两个博主的成绩）
+- 支持手动粘贴链接（搜狗搜不到时的降级方案）
+- 自动定期更新博主成绩单
+- 博主对比（同时查看两个博主）
 - 推荐风格分析（偏什么板块、什么价位的票）
-- 用户社区（匿名分享成绩单、讨论）
 - 接入更多平台（雪球、同花顺社区等）
 
 ---
