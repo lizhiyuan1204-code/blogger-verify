@@ -4,21 +4,19 @@ import { searchBlogger, submitAnalysis, type BloggerResult } from '../lib/api'
 import { getHistory } from '../lib/storage'
 
 const DATE_RANGES = [
+  { value: '1w', label: '近1周' },
+  { value: '2w', label: '近2周' },
   { value: '1m', label: '近1月' },
   { value: '3m', label: '近3月' },
   { value: '6m', label: '近6月' },
-  { value: '1y', label: '近1年' },
 ]
-
-const HOLD_DAYS = [1, 3, 5, 10, 20]
 
 export default function Home() {
   const navigate = useNavigate()
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<BloggerResult[]>([])
   const [selected, setSelected] = useState<string | null>(null)
-  const [dateRange, setDateRange] = useState('3m')
-  const [holdDays, setHoldDays] = useState(5)
+  const [dateRange, setDateRange] = useState('1m')
   const [searching, setSearching] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
@@ -51,7 +49,7 @@ export default function Home() {
       const { task_id } = await submitAnalysis({
         blogger_name: bloggerName,
         date_range: dateRange,
-        hold_days: holdDays,
+        hold_days: 5,
       })
       navigate(`/progress/${task_id}`)
     } catch (e: any) {
@@ -137,24 +135,7 @@ export default function Home() {
             </div>
           </div>
 
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">持有天数</label>
-            <div className="flex gap-2">
-              {HOLD_DAYS.map(d => (
-                <button
-                  key={d}
-                  onClick={() => setHoldDays(d)}
-                  className={`flex-1 py-2 rounded-lg text-sm font-medium transition-all ${
-                    holdDays === d
-                      ? 'bg-blue-500 text-white shadow-sm'
-                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                  }`}
-                >
-                  {d}天
-                </button>
-              ))}
-            </div>
-          </div>
+
         </div>
 
         {/* Submit */}

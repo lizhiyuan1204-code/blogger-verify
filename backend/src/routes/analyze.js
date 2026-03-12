@@ -24,7 +24,7 @@ function sendSSE(taskId, event, data) {
 }
 
 // SSE日期范围映射
-const DATE_RANGE_MAP = { '1m': '3', '3m': '3', '6m': '4', '1y': '4' };
+const DATE_RANGE_MAP = { '1w': '1', '2w': '2', '1m': '3', '3m': '3', '6m': '4' };
 
 // POST /api/analyze - 提交分析任务
 router.post('/', async (req, res) => {
