@@ -1,6 +1,57 @@
 import { useState } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { searchBlogger, submitAnalysis, type BloggerResult } from '../lib/api'
+
+function ManualMode() {
+  const navigate = useNavigate()
+  const [urls, setUrls] = useState('')
+  const [bloggerName, setBloggerName] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+
+  async function handleManual() {
+    if (!urls.trim() || !bloggerName.trim()) return
+    setSubmitting(true)
+    try {
+      const resp = await fetch('/api/analyze/manual', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ blogger_name: bloggerName.trim(), urls: urls.trim().split('\n').filter(Boolean) }),
+      })
+      const data = await resp.json()
+      if (data.task_id) navigate(`/progress/${data.task_id}`)
+    } catch {
+      alert('提交失败')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <div className="mt-3 bg-white rounded-xl border border-gray-100 p-4">
+      <input
+        type="text"
+        value={bloggerName}
+        onChange={e => setBloggerName(e.target.value)}
+        placeholder="博主名称"
+        className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm mb-2 focus:outline-none focus:ring-2 focus:ring-blue-400"
+      />
+      <textarea
+        value={urls}
+        onChange={e => setUrls(e.target.value)}
+        placeholder="每行粘贴一个微信文章链接&#10;https://mp.weixin.qq.com/s/..."
+        rows={4}
+        className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm mb-2 focus:outline-none focus:ring-2 focus:ring-blue-400"
+      />
+      <button
+        onClick={handleManual}
+        disabled={submitting || !urls.trim() || !bloggerName.trim()}
+        className="w-full py-2 bg-gray-700 text-white rounded-lg text-sm font-medium hover:bg-gray-800 disabled:bg-gray-300"
+      >
+        {submitting ? '提交中...' : '手动分析'}
+      </button>
+    </div>
+  )
+}
 import { getHistory } from '../lib/storage'
 
 const DATE_RANGES = [
@@ -175,6 +226,14 @@ export default function Home() {
             </div>
           </div>
         )}
+
+        {/* Manual Mode */}
+        <details className="mt-6">
+          <summary className="text-sm text-gray-400 cursor-pointer hover:text-gray-600">
+            🔗 搜不到？手动粘贴文章链接
+          </summary>
+          <ManualMode />
+        </details>
 
         {/* Footer */}
         <p className="text-center text-xs text-gray-400 mt-8">

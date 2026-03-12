@@ -52,6 +52,90 @@ router.post('/', async (req, res) => {
   });
 });
 
+// POST /api/analyze/manual - 手动粘贴链接分析
+router.post('/manual', async (req, res) => {
+  const { blogger_name, urls } = req.body;
+  if (!blogger_name || !urls || !Array.isArray(urls) || urls.length === 0) {
+    return res.status(400).json({ error: '缺少博主名称或文章链接' });
+  }
+  
+  const taskId = uuid();
+  const bloggerId = uuid();
+  const shareId = uuid().slice(0, 8);
+  
+  db.upsertBlogger.run(bloggerId, blogger_name, null, null, null);
+  db.createTask.run(taskId, bloggerId, blogger_name, 'manual', 5, shareId);
+  
+  res.json({ task_id: taskId, share_id: shareId });
+  
+  // 异步执行（直接用提供的URL，跳过搜索）
+  runManualAnalysis(taskId, bloggerId, blogger_name, urls, 5).catch(err => {
+    console.error(`Manual task ${taskId} failed:`, err.message);
+    db.failTask.run(err.message, taskId);
+    sendSSE(taskId, 'error', { message: err.message });
+  });
+});
+
+async function runManualAnalysis(taskId, bloggerId, bloggerName, urls, holdDays) {
+  const totalArticles = urls.length;
+  db.updateTaskStatus.run('analyzing', 'analyze', 0, totalArticles, totalArticles, null, taskId);
+  sendSSE(taskId, 'progress', { phase: 'analyze', current: 0, total: totalArticles });
+  
+  let stocksFound = 0;
+  
+  for (let i = 0; i < urls.length; i++) {
+    const articleId = uuid();
+    sendSSE(taskId, 'progress', { phase: 'analyze', current: i + 1, total: totalArticles, stocks_found: stocksFound });
+    
+    try {
+      const { title, content, publishDate } = await scrapeArticle(urls[i]);
+      db.createArticle.run(articleId, taskId, bloggerId, urls[i], title, publishDate, 'pending');
+      
+      if (!content || content.length < 50) {
+        db.updateArticle.run(0, 0, 'skipped', articleId);
+        continue;
+      }
+      
+      const stocks = await extractStocks(content, title);
+      db.updateArticle.run(content.length, stocks.length, 'success', articleId);
+      
+      for (const stock of stocks) {
+        const recId = uuid();
+        db.createRecommendation.run(recId, taskId, articleId, bloggerId, stock.stock_code, stock.stock_name, stock.direction, stock.strength, publishDate || null, stock.context, holdDays);
+        stocksFound++;
+      }
+    } catch (e) {
+      console.warn(`手动文章抓取失败 [${urls[i]}]:`, e.message);
+      db.createArticle.run(articleId, taskId, bloggerId, urls[i], urls[i].slice(0, 50), null);
+      db.updateArticle.run(0, 0, 'failed', articleId);
+    }
+    
+    db.updateTaskStatus.run('analyzing', 'analyze', i + 1, totalArticles, null, stocksFound, taskId);
+    await sleep(500);
+  }
+  
+  // 查询行情
+  const recs = db.getRecsByTask.all(taskId);
+  sendSSE(taskId, 'progress', { phase: 'market', current: 0, total: recs.length });
+  
+  for (let i = 0; i < recs.length; i++) {
+    sendSSE(taskId, 'progress', { phase: 'market', current: i + 1, total: recs.length });
+    try {
+      if (recs[i].stock_code && recs[i].recommend_date) {
+        const result = await calcReturn(recs[i].stock_code, recs[i].recommend_date, holdDays);
+        db.updateRecommendationReturn.run(result.buyPrice, result.sellPrice, result.buyDate || null, result.sellDate || null, result.returnPct, result.status, recs[i].id);
+      }
+    } catch (e) {
+      console.warn(`行情失败 [${recs[i].stock_name}]:`, e.message);
+    }
+    await sleep(300);
+  }
+  
+  db.completeTask.run(totalArticles, stocksFound, taskId);
+  sendSSE(taskId, 'complete', { task_id: taskId, share_id: db.getTask.get(taskId)?.share_id });
+  setTimeout(() => sseClients.delete(taskId), 5000);
+}
+
 // GET /api/analyze/:id/sse - SSE推送进度
 router.get('/:id/sse', (req, res) => {
   const taskId = req.params.id;

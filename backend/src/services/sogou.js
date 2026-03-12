@@ -7,148 +7,123 @@ const axios = require('axios');
 const cheerio = require('cheerio');
 
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+const HEADERS = {
+  'User-Agent': UA,
+  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+  'Accept-Language': 'zh-CN,zh;q=0.9',
+};
 
 // === Cookie管理 ===
 let cookieJar = '';
-let sogouBlocked = false;
 
 function resetSession() {
   cookieJar = '';
-  sogouBlocked = false;
 }
 
-async function sogouRequest(url, referer = 'https://weixin.sogou.com/') {
-  // 初始化cookie
-  if (!cookieJar) {
-    try {
-      const r = await axios.get('https://weixin.sogou.com/', {
-        headers: { 'User-Agent': UA },
-        timeout: 10000,
-      });
-      const sc = r.headers['set-cookie'];
-      if (sc) cookieJar = sc.map(c => c.split(';')[0]).join('; ');
-    } catch (e) {
-      sogouBlocked = true;
-      throw new Error('SOGOU_INIT_FAILED');
-    }
-  }
-  
-  const resp = await axios.get(url, {
-    headers: {
-      'User-Agent': UA,
-      'Accept': 'text/html,application/xhtml+xml',
-      'Accept-Language': 'zh-CN,zh;q=0.9',
-      'Referer': referer,
-      'Cookie': cookieJar,
-    },
-    maxRedirects: 5,
-    timeout: 15000,
-    validateStatus: () => true,
+async function ensureCookies() {
+  if (cookieJar) return;
+  const r = await axios.get('https://weixin.sogou.com/', {
+    headers: HEADERS,
+    timeout: 10000,
   });
-  
-  // 更新cookies
-  const sc = resp.headers['set-cookie'];
-  if (sc) {
-    const existing = new Map(cookieJar.split('; ').filter(Boolean).map(c => {
-      const [k, ...v] = c.split('=');
-      return [k, v.join('=')];
-    }));
-    for (const part of sc.map(c => c.split(';')[0])) {
-      const [k, ...v] = part.split('=');
-      existing.set(k, v.join('='));
-    }
-    cookieJar = [...existing.entries()].map(([k, v]) => `${k}=${v}`).join('; ');
-  }
-  
-  // 检测限流：返回首页搜索框而不是结果
-  if (resp.data.length < 10000 && !resp.data.includes('news-list')) {
-    sogouBlocked = true;
-    throw new Error('SOGOU_RATE_LIMITED');
-  }
-  
-  return resp;
+  const sc = r.headers['set-cookie'];
+  if (sc) cookieJar = sc.map(c => c.split(';')[0]).join('; ');
 }
 
 // === 搜索公众号 ===
 async function searchBlogger(query) {
-  // 搜狗搜索公众号
-  if (!sogouBlocked) {
-    try {
-      const resp = await sogouRequest(
-        `https://weixin.sogou.com/weixin?type=1&query=${encodeURIComponent(query)}`
-      );
-      const $ = cheerio.load(resp.data);
-      const results = [];
-      $('ul.news-list2 li, .search-list li').each((i, el) => {
-        const name = $(el).find('.tit a, h3 a').first().text().trim();
-        const wechatId = $(el).find('label[name="em_weixinhao"]').text().trim();
-        const desc = $(el).find('.s-p, p.s-p3').first().text().trim();
-        if (name) results.push({ name, wechatId, desc: desc.slice(0, 100) });
-      });
-      if (results.length > 0) return results;
-    } catch (e) {
-      console.warn('搜狗公众号搜索失败:', e.message);
+  try {
+    await ensureCookies();
+    const resp = await axios.get(
+      `https://weixin.sogou.com/weixin?type=1&query=${encodeURIComponent(query)}`,
+      { headers: { ...HEADERS, Cookie: cookieJar, Referer: 'https://weixin.sogou.com/' }, validateStatus: () => true, timeout: 15000 }
+    );
+    
+    if (!resp.data.includes('news-list') && !resp.data.includes('txt-box')) {
+      return [{ name: query, wechatId: '', desc: '(直接搜索文章)' }];
     }
+    
+    const $ = cheerio.load(resp.data);
+    const results = [];
+    $('ul.news-list2 li, .search-list li').each((i, el) => {
+      const name = $(el).find('.tit a, h3 a').first().text().trim();
+      const wechatId = $(el).find('label[name="em_weixinhao"]').text().trim();
+      const desc = $(el).find('.s-p, p.s-p3').first().text().trim();
+      if (name) results.push({ name, wechatId, desc: desc.slice(0, 100) });
+    });
+    return results.length > 0 ? results : [{ name: query, wechatId: '', desc: '(直接搜索文章)' }];
+  } catch (e) {
+    console.warn('搜狗公众号搜索失败:', e.message);
+    return [{ name: query, wechatId: '', desc: '(直接搜索文章)' }];
   }
-  
-  // 降级：返回用户输入的名称作为唯一结果
-  return [{ name: query, wechatId: '', desc: '(直接搜索文章)' }];
 }
 
-// === 搜索文章 ===
+// === 搜索文章（多源） ===
 async function searchArticles(query, timeRange = '3', page = 1) {
-  // 尝试搜狗
-  if (!sogouBlocked) {
-    try {
-      const result = await searchArticlesFromSogou(query, timeRange, page);
-      if (result.articles.length > 0) return result;
-    } catch (e) {
-      console.warn('搜狗文章搜索失败，尝试备选源:', e.message);
-    }
-  }
-  
-  // 降级到Google
+  // 1. 搜狗
   try {
-    return await searchArticlesFromGoogle(query, page);
+    const result = await searchArticlesFromSogou(query, timeRange, page);
+    if (result.articles.length > 0) return result;
   } catch (e) {
-    console.warn('Google搜索失败:', e.message);
+    console.warn('搜狗:', e.message);
   }
-  
-  // 再降级到必应
+
+  // 2. Google
   try {
-    return await searchArticlesFromBing(query, page);
+    const result = await searchArticlesFromGoogle(query, page);
+    if (result.articles.length > 0) return result;
   } catch (e) {
-    console.warn('必应搜索也失败:', e.message);
+    console.warn('Google:', e.message);
   }
-  
+
   return { articles: [], hasMore: false };
 }
 
 // --- 搜狗源 ---
 async function searchArticlesFromSogou(query, timeRange, page) {
-  const resp = await sogouRequest(
-    `https://weixin.sogou.com/weixin?type=2&query=${encodeURIComponent(query)}&tsn=${timeRange}&page=${page}`
+  await ensureCookies();
+  
+  const resp = await axios.get(
+    `https://weixin.sogou.com/weixin?type=2&query=${encodeURIComponent(query)}&tsn=${timeRange}&page=${page}`,
+    {
+      headers: { ...HEADERS, Cookie: cookieJar, Referer: 'https://weixin.sogou.com/' },
+      validateStatus: () => true,
+      timeout: 15000,
+    }
   );
   
+  // 更新cookies
+  const sc = resp.headers['set-cookie'];
+  if (sc) {
+    const parts = sc.map(c => c.split(';')[0]);
+    const existing = new Map(cookieJar.split('; ').filter(Boolean).map(c => { const [k, ...v] = c.split('='); return [k, v.join('=')]; }));
+    for (const p of parts) { const [k, ...v] = p.split('='); existing.set(k, v.join('=')); }
+    cookieJar = [...existing.entries()].map(([k, v]) => `${k}=${v}`).join('; ');
+  }
+  
   const html = resp.data;
+  
+  // 限流检测
+  if (!html.includes('news-list') || html.length < 10000) {
+    throw new Error('SOGOU_RATE_LIMITED');
+  }
+  
   if (html.includes('antispider') || html.includes('访问过于频繁')) {
-    throw new Error('RATE_LIMITED');
+    throw new Error('SOGOU_ANTISPIDER');
   }
   
   const $ = cheerio.load(html);
   const articles = [];
   
-  $('ul.news-list li, .news-list li').each((i, el) => {
+  $('.news-list li').each((i, el) => {
     const $a = $(el).find('h3 a').first();
     if (!$a.length) return;
     const title = $a.text().replace(/<!--.*?-->/g, '').trim();
     let sogouUrl = $a.attr('href') || '';
-    if (sogouUrl && !sogouUrl.startsWith('http')) {
-      sogouUrl = `https://weixin.sogou.com${sogouUrl}`;
-    }
+    if (sogouUrl && !sogouUrl.startsWith('http')) sogouUrl = `https://weixin.sogou.com${sogouUrl}`;
     const source = $(el).find('.account').text().trim();
     if (title && sogouUrl) {
-      articles.push({ title, sogouUrl, source, date: '', searchEngine: 'sogou' });
+      articles.push({ title, sogouUrl, wxUrl: null, source, date: '', searchEngine: 'sogou' });
     }
   });
   
@@ -158,85 +133,39 @@ async function searchArticlesFromSogou(query, timeRange, page) {
 // --- Google源 ---
 async function searchArticlesFromGoogle(query, page) {
   const start = (page - 1) * 10;
-  const url = `https://www.google.com/search?q=${encodeURIComponent(query)}+site:mp.weixin.qq.com&start=${start}&num=10`;
-  
-  const resp = await axios.get(url, {
-    headers: {
-      'User-Agent': UA,
-      'Accept': 'text/html',
-      'Accept-Language': 'zh-CN,zh;q=0.9',
-    },
-    timeout: 15000,
-  });
-  
+  const resp = await axios.get(
+    `https://www.google.com/search?q=${encodeURIComponent(query)}+site:mp.weixin.qq.com&start=${start}&num=10`,
+    { headers: HEADERS, timeout: 15000 }
+  );
   const $ = cheerio.load(resp.data);
   const articles = [];
-  
-  // Google搜索结果
-  $('div.g, div[data-sokoban-container]').each((i, el) => {
-    const $a = $(el).find('a').first();
-    const href = $a.attr('href') || '';
-    const title = $(el).find('h3').first().text().trim();
-    
-    if (title && href.includes('mp.weixin.qq.com')) {
-      articles.push({
-        title,
-        sogouUrl: null, // 不需要搜狗跳转
-        wxUrl: href,    // 直接就是微信URL
-        source: '',
-        date: '',
-        searchEngine: 'google',
-      });
+  $('a').each((i, el) => {
+    const href = $(el).attr('href') || '';
+    if (href.includes('mp.weixin.qq.com/s')) {
+      const title = $(el).find('h3').text().trim() || $(el).text().trim().slice(0, 60);
+      if (title && title.length > 5) {
+        articles.push({ title, sogouUrl: null, wxUrl: href, source: '', date: '', searchEngine: 'google' });
+      }
     }
   });
-  
-  return { articles, hasMore: articles.length >= 10 };
+  // 去重
+  const seen = new Set();
+  const unique = articles.filter(a => { if (seen.has(a.wxUrl)) return false; seen.add(a.wxUrl); return true; });
+  return { articles: unique, hasMore: unique.length >= 8 };
 }
 
-// --- 必应源 ---
-async function searchArticlesFromBing(query, page) {
-  const offset = (page - 1) * 10;
-  const url = `https://cn.bing.com/search?q=${encodeURIComponent(query)}+site:mp.weixin.qq.com&first=${offset + 1}`;
-  
-  const resp = await axios.get(url, {
-    headers: {
-      'User-Agent': UA,
-      'Accept': 'text/html',
-      'Accept-Language': 'zh-CN,zh;q=0.9',
-    },
-    timeout: 15000,
-  });
-  
-  const $ = cheerio.load(resp.data);
-  const articles = [];
-  
-  $('li.b_algo').each((i, el) => {
-    const $a = $(el).find('h2 a').first();
-    const href = $a.attr('href') || '';
-    const title = $a.text().trim();
-    
-    if (title && href.includes('mp.weixin.qq.com')) {
-      articles.push({
-        title,
-        sogouUrl: null,
-        wxUrl: href,
-        source: '',
-        date: '',
-        searchEngine: 'bing',
-      });
-    }
-  });
-  
-  return { articles, hasMore: articles.length >= 10 };
-}
-
-// === 解析微信URL ===
+// === 解析搜狗跳转URL ===
 async function resolveWxUrl(sogouUrl) {
   if (!sogouUrl) return null;
+  await ensureCookies();
   
-  const resp = await sogouRequest(sogouUrl, 'https://weixin.sogou.com/weixin');
+  const resp = await axios.get(sogouUrl, {
+    headers: { ...HEADERS, Cookie: cookieJar, Referer: 'https://weixin.sogou.com/weixin' },
+    validateStatus: () => true,
+    timeout: 15000,
+  });
+  
   const html = resp.data;
-  
   const parts = html.match(/url \+= '([^']+)'/g);
   if (parts) {
     return parts.map(p => p.match(/'([^']+)'/)[1]).join('').replace(/@/g, '');
