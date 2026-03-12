@@ -6,3 +6,5 @@ data/
 /backend/data/
 /frontend/node_modules/
 /frontend/dist/
+node_modules/
+dist/
