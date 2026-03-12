@@ -1,0 +1,23 @@
+{
+  "name": "blogger-verify",
+  "version": "1.0.0",
+  "description": "公众号荐股博主胜率统计工具 — 粘贴文章链接，自动生成博主成绩单。",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lizhiyuan1204-code/blogger-verify.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/lizhiyuan1204-code/blogger-verify/issues"
+  },
+  "homepage": "https://github.com/lizhiyuan1204-code/blogger-verify#readme",
+  "dependencies": {
+    "playwright": "^1.58.2"
+  }
+}
