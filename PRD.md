@@ -172,7 +172,7 @@ https://weixin.sogou.com/weixin?type=2&query={公众号名称}&tsn=4  (近1年)
 | 前端 | React + Tailwind CSS + Vite | 组件化，样式快 |
 | 后端 | Node.js (Express) | 和前端同语言 |
 | 爬虫 | axios + cheerio | 搜狗搜索 + 微信文章HTML解析 |
-| AI | Gemini 2.0 Flash API | 便宜快，够用 |
+| AI | 可配置：GLM-4-Flash（默认，免费） / DeepSeek / Gemini | 通过环境变量切换 |
 | 行情 | 腾讯行情 qt.gtimg.cn | 免费稳定 |
 | 数据库 | SQLite (better-sqlite3) | MVP够用，零运维 |
 | 部署 | Vercel (前端) + Railway/Render (后端) | 免费额度足够 |
@@ -190,14 +190,19 @@ Express API (Railway/Render)
     └── /api/share/:id       → 分享页数据
         ├── 搜狗微信搜索（公众号+文章列表）
         ├── 微信文章抓取（cheerio解析HTML）
-        ├── AI提取（@google/generative-ai）
+        ├── AI提取（ai-provider：智谱/DeepSeek/Gemini可切换）
         └── 行情查询（axios → qt.gtimg.cn）
 ```
 
 ### 环境变量
 
 ```
-GEMINI_API_KEY=xxx             # Gemini API密钥
+# AI模型配置（三选一）
+AI_PROVIDER=zhipu              # zhipu(默认) / deepseek / gemini
+ZHIPU_API_KEY=xxx              # 智谱GLM-4-Flash（免费额度大）
+DEEPSEEK_API_KEY=xxx           # DeepSeek（极便宜）
+GEMINI_API_KEY=xxx             # Gemini（备选）
+
 DATABASE_URL=./data/db.sqlite  # SQLite路径
 CORS_ORIGIN=https://xxx.vercel.app  # 前端域名
 ```
@@ -410,7 +415,8 @@ blogger-verify/
 │   │   ├── services/
 │   │   │   ├── sogou.ts         # 搜狗微信搜索+文章列表
 │   │   │   ├── scraper.ts       # 微信文章正文抓取
-│   │   │   ├── extractor.ts     # AI提取推荐股票
+│   │   │   ├── ai-provider.ts   # AI统一接口（支持智谱/DeepSeek/Gemini切换）
+│   │   │   ├── extractor.ts     # AI提取推荐股票（调用ai-provider）
 │   │   │   ├── market.ts        # 行情查询
 │   │   │   └── report.ts        # 成绩单生成
 │   │   └── db/
